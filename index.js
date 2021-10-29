@@ -36,6 +36,7 @@ exports.handler = async (event, context, callback) => {
     Key: srcKey,
   }
   const origin = await awsS3.getObject(getParams).promise()
+  console.log("get from ", origin)
 
   const path = "/tmp/" + filename(srcKey)
   await fs.writeFile(path, origin.Body)
@@ -52,9 +53,8 @@ exports.handler = async (event, context, callback) => {
     ContentType: "image/" + DST_EXT,
     ACL: "public-read",
   }
-  await awsS3.putObject(putParams).promise()
-
-  console.log("Successfully resized " + srcBucket + "/" + srcKey + " and uploaded to " + dstBucket + "/" + dstKey)
+  const result = await awsS3.putObject(putParams).promise()
+  console.log("put to ", result)
 }
 
 const convert = async (src, dst) => {
