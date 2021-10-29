@@ -28,15 +28,15 @@ exports.handler = async (event, context, callback) => {
   }
 
   // file/xxx.pdf -> thumbnail/xxx.jpg
-  const re = new RegExp(`^${SRC_DIR}\/(.*?)\.${SRC_EXT}$\\d`, "g")
+  const re = new RegExp(`^${SRC_DIR}\/(.*?)\.${SRC_EXT}$`, "g")
   const dstKey = srcKey.replace(re, DST_DIR + "/$1." + DST_EXT)
 
   const getParams = {
     Bucket: srcBucket,
     Key: srcKey,
   }
+  console.log("get from ", getParams)
   const origin = await awsS3.getObject(getParams).promise()
-  console.log("get from ", origin)
 
   const path = "/tmp/" + filename(srcKey)
   await fs.writeFile(path, origin.Body)
@@ -53,8 +53,8 @@ exports.handler = async (event, context, callback) => {
     ContentType: "image/" + DST_EXT,
     ACL: "public-read",
   }
-  const result = await awsS3.putObject(putParams).promise()
-  console.log("put to ", result)
+  const result = await awsS3.upload(putParams).promise()
+  console.log("put to ", result.Location)
 }
 
 const convert = async (src, dst) => {
