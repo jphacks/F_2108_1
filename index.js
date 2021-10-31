@@ -1,62 +1,76 @@
+// This is not needed to be included in node_modules because it is in default lambda runtime.
 const aws = require("aws-sdk")
+
 const child_process = require("child_process")
+const got = require("got")
 const fs = require("fs").promises
 
-const SRC_EXT = "pdf"
-const DST_EXT = "jpg"
-const SRC_DIR = "file"
-const DST_DIR = "thumbnail"
-const DENSITY = "300"
-const RESIZE = "1000x1000"
+const SRC_EXTENSION = "pdf"
+const DST_KEY_PREFIX = "thumbnail"
+const DST_EXTENSION = "jpg"
+
 const awsS3 = new aws.S3()
 
 exports.handler = async (event, context, callback) => {
-  const s3 = event.Records[0].s3
-  const srcBucket = s3.bucket.name
-  const srcKey = decodeURIComponent(s3.object.key.replace(/\+/g, " "))
+  console.log("event: ", event)
 
-  const dstBucket = srcBucket
+  let srcPath
+  let data
+  let dstKey
+  let dstPath
 
-  const matched = srcKey.match(/\.([^.]*)$/)
-  if (!matched) {
-    throw new Error("Failed to match extension.")
+  // When passed external resource url, such as Firebase Storage.
+  if (event.url && event.fileId) {
+    srcPath = "/tmp/" + event.fileId + "." + SRC_EXTENSION
+    dstPath = "/tmp/" + event.fileId + "." + DST_EXTENSION
+    dstKey = DST_KEY_PREFIX + "/" + event.fileId
+
+    const response = await got(event.url)
+    console.log("fetched from url: ", event.url)
+    data = response.rawBody
+  }
+  // When fired by s3 object created trigger.
+  else {
+    const bucket = event.Records[0].s3.bucket.name
+    const srcKey = decodeURIComponent(event.Records[0].s3.object.key.replace(/\+/g, " "))
+    srcPath = "/tmp/" + filenameOf(srcKey)
+
+    // file/xxx.<SRC_EXTENSION> -> <DST_KEY_PREFIX>/xxx.<DST_EXTENSION>
+    const re = new RegExp(`^file\/(.*?)\.${SRC_EXTENSION}$`, "g")
+    dstKey = srcKey.replace(re, DST_KEY_PREFIX + "/$1." + DST_EXTENSION)
+    dstPath = "/tmp/" + filenameOf(dstKey)
+
+    const getParams = {
+      Bucket: bucket,
+      Key: srcKey,
+    }
+    const origin = await awsS3.getObject(getParams).promise()
+    console.log("fetched from s3:", getParams)
+    data = origin.Body
   }
 
-  const extension = matched[1].toLowerCase()
-  if (extension !== SRC_EXT) {
-    throw new Error(`Unsupported extension: ${extension}`)
-  }
+  console.log("srcPath: ", srcPath)
+  console.log("dstPath: ", dstPath)
+  await fs.writeFile(srcPath, data)
 
-  // file/xxx.pdf -> thumbnail/xxx.jpg
-  const re = new RegExp(`^${SRC_DIR}\/(.*?)\.${SRC_EXT}$`, "g")
-  const dstKey = srcKey.replace(re, DST_DIR + "/$1." + DST_EXT)
-
-  const getParams = {
-    Bucket: srcBucket,
-    Key: srcKey,
-  }
-  console.log("get from ", getParams)
-  const origin = await awsS3.getObject(getParams).promise()
-
-  const path = "/tmp/" + filename(srcKey)
-  await fs.writeFile(path, origin.Body)
-
-  const src = path
-  const dst = "/tmp/" + filename(dstKey)
-  await convert(src, dst)
-  const buffer = await fs.readFile(dst)
+  await convert(srcPath, dstPath)
+  const buffer = await fs.readFile(dstPath)
 
   const putParams = {
-    Bucket: dstBucket,
+    Bucket: process.env.BUCKET,
     Key: dstKey,
     Body: buffer,
-    ContentType: "image/" + DST_EXT,
+    ContentType: "image/" + DST_EXTENSION,
     ACL: "public-read",
   }
   const result = await awsS3.upload(putParams).promise()
-  console.log("put to ", result.Location)
+  console.log("put to s3:", result.Location)
 }
 
+const DENSITY = "300"
+const RESIZE = "1000x1000"
+
+// convert pdf to <DST_EXTENSION>
 const convert = async (src, dst) => {
   return await new Promise((resolve, reject) => {
     // convert first page of src to dst
@@ -67,7 +81,7 @@ const convert = async (src, dst) => {
   })
 }
 
-const filename = (path) => {
+const filenameOf = (path) => {
   const matched = path.match(/\/([^/]*)$/)
   if (!matched) {
     throw new Error(`path: ${path} was not matched to filename RegExp.`)
